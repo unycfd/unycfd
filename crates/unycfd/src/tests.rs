@@ -4,7 +4,7 @@ mod tests {
     use crate::proxy::IngressOrigin;
 
     #[test]
-    fn test_yaml_config_parsing_qycli_format() {
+    fn test_yaml_config_parsing_format() {
         let yaml_str = r#"
 tunnel: 4c3e387c-658b-4b2a-a9a7-96a1a1f332ab
 credentials-file: /etc/cloudflared/my-account.json
