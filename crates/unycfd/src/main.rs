@@ -188,17 +188,21 @@ async fn async_main(cli: CliOptions) -> Result<(), Box<dyn std::error::Error + S
 
     // Setup graceful shutdown signal
     let shutdown = async {
+        #[cfg(unix)]
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("SIGINT received, beginning shutdown");
             }
             _ = async {
+                #[cfg(unix)]
                 if let Some(ref mut s) = sigterm {
                     s.recv().await;
                 } else {
                     std::future::pending::<()>().await;
                 }
+                #[cfg(not(unix))]
+                std::future::pending::<()>().await;
             } => {
                 tracing::info!("SIGTERM received, beginning shutdown");
             }

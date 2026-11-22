@@ -1,7 +1,10 @@
+#[cfg(unix)]
 use std::env;
+#[cfg(unix)]
 use std::os::unix::net::UnixDatagram;
 
 /// Sends a state notification string to systemd via the `$NOTIFY_SOCKET` socket if configured.
+#[cfg(unix)]
 pub fn notify(state: &str) {
     let Ok(socket_path) = env::var("NOTIFY_SOCKET") else {
         return;
@@ -26,6 +29,10 @@ pub fn notify(state: &str) {
         let _ = sock.send_to(state.as_bytes(), os_str);
     }
 }
+
+/// No-op on non-unix platforms
+#[cfg(not(unix))]
+pub fn notify(_state: &str) {}
 
 /// Informs systemd that the service has successfully started and is ready.
 pub fn notify_ready() {

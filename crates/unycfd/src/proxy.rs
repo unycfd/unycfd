@@ -93,6 +93,7 @@ impl IngressOrigin {
             return;
         }
 
+        #[cfg(unix)]
         if let Some(unix_path) = service.strip_prefix("unix:") {
             let socket_path = PathBuf::from(unix_path);
             match tokio::net::UnixStream::connect(&socket_path).await {
@@ -108,6 +109,12 @@ impl IngressOrigin {
                     ));
                 }
             }
+            return;
+        }
+
+        #[cfg(not(unix))]
+        if service.starts_with("unix:") {
+            respond.fail("unix domain sockets are not supported on this platform");
             return;
         }
 
@@ -302,6 +309,7 @@ impl IngressOrigin {
             }
         };
 
+        #[cfg(unix)]
         if let Some(unix_path) = service.strip_prefix("unix:") {
             match tokio::net::UnixStream::connect(unix_path).await {
                 Ok(stream) => {
@@ -311,6 +319,12 @@ impl IngressOrigin {
                     respond.fail(format!("connect unix socket failed: {e}"));
                 }
             }
+            return;
+        }
+
+        #[cfg(not(unix))]
+        if service.starts_with("unix:") {
+            respond.fail("unix domain sockets are not supported on this platform");
             return;
         }
 
