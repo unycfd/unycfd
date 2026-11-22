@@ -61,6 +61,9 @@ async fn async_main(cli: CliOptions) -> Result<(), Box<dyn std::error::Error + S
     let mut config = if let Some(ref config_path) = cli.config_path {
         tracing::info!("loading config from {}", config_path.display());
         Config::from_file(config_path)?
+    } else if std::path::Path::new("/etc/unycfd/config.yml").is_file() {
+        tracing::info!("loading default config from /etc/unycfd/config.yml");
+        Config::from_file("/etc/unycfd/config.yml")?
     } else if std::path::Path::new("/etc/cloudflared/config.yml").is_file() {
         tracing::info!("loading default config from /etc/cloudflared/config.yml");
         Config::from_file("/etc/cloudflared/config.yml")?
@@ -116,9 +119,12 @@ async fn async_main(cli: CliOptions) -> Result<(), Box<dyn std::error::Error + S
     } else if let Some(ref tid) = config.tunnel {
         // Look for matching credentials file in standard paths
         let standard_path = format!("/etc/cloudflared/{tid}.json");
+        let uny_path = format!("/etc/unycfd/{tid}.json");
         let alt_path = format!("/var/qyc/cloudflare/tunnels/{tid}.json");
         let cred_path = if std::path::Path::new(&standard_path).is_file() {
             Some(standard_path)
+        } else if std::path::Path::new(&uny_path).is_file() {
+            Some(uny_path)
         } else if std::path::Path::new(&alt_path).is_file() {
             Some(alt_path)
         } else {

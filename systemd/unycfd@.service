@@ -1,0 +1,24 @@
+[Unit]
+Description=unycfd Cloudflare Tunnel for Account %i
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/unycfd/unycfd
+
+[Service]
+TimeoutStartSec=0
+Type=notify
+# Checks /etc/cloudflared/config-%i.yml (or adjust to /etc/unycfd/config-%i.yml)
+ExecStart=/usr/local/bin/unycfd tunnel --config /etc/cloudflared/config-%i.yml run
+Restart=on-failure
+RestartSec=5s
+KillMode=mixed
+TimeoutStopSec=15
+LimitNOFILE=65536
+
+# Security hardening for low-privilege execution
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

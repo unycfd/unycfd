@@ -128,6 +128,35 @@ ingress:
 
 ---
 
+## Systemd Template Service (`unycfd@.service`)
+
+A systemd template unit is included at [`systemd/unycfd@.service`](systemd/unycfd@.service) to manage multiple concurrent tunnels cleanly (e.g. per account or per domain):
+
+### Installation
+
+1. Install the unit template:
+   ```bash
+   sudo cp systemd/unycfd@.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   ```
+
+2. Place configuration files for each instance named after the account/instance:
+   * Config: `/etc/cloudflared/config-<NAME>.yml` (or `/etc/unycfd/config-<NAME>.yml`)
+   * Credentials: `/etc/cloudflared/<NAME>.json` (or `/etc/unycfd/<NAME>.json`)
+
+3. Start and enable instances individually:
+   ```bash
+   # Starts tunnel using /etc/cloudflared/config-account1.yml
+   sudo systemctl enable --now unycfd@account1
+
+   # Starts tunnel using /etc/cloudflared/config-account2.yml
+   sudo systemctl enable --now unycfd@account2
+   ```
+
+Because `unycfd` integrates with systemd's notification protocol (`Type=notify`), systemd only marks the service as `active (running)` once registration with the Cloudflare edge is fully confirmed.
+
+---
+
 ## License
 
 BSD 3-Clause License. See [LICENSE](LICENSE) for details.
