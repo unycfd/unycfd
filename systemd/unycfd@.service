@@ -5,8 +5,9 @@ Wants=network-online.target
 Documentation=https://github.com/unycfd/unycfd
 
 [Service]
-TimeoutStartSec=0
+TimeoutStartSec=60
 Type=notify
+Environment=MALLOC_ARENA_MAX=1
 # Checks /etc/cloudflared/config-%i.yml (or adjust to /etc/unycfd/config-%i.yml)
 ExecStart=/usr/local/bin/unycfd tunnel --config /etc/cloudflared/config-%i.yml run
 Restart=on-failure

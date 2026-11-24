@@ -27,10 +27,10 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngressRule {
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub hostname: Option<String>,
 
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub path: Option<String>,
 
     pub service: String,
@@ -45,21 +45,27 @@ impl Config {
     }
 
     /// Converts ingress rules into the JSON format expected by Cloudflare edge for updateConfiguration.
+    #[allow(dead_code)]
     pub fn to_cloudflared_json(&self) -> String {
-        #[derive(Serialize)]
-        struct EdgeConfig<'a> {
-            ingress: &'a [IngressRule],
-            #[serde(rename = "warp-routing")]
-            warp_routing: serde_json::Value,
-        }
-
-        let edge_config = EdgeConfig {
-            ingress: &self.ingress,
-            warp_routing: serde_json::json!({}),
-        };
-
-        serde_json::to_string(&edge_config).unwrap_or_else(|_| {
-            r#"{"ingress":[{"hostname":"","service":"http_status:404"}],"warp-routing":{}}"#.to_string()
-        })
+        ingress_to_cloudflared_json(&self.ingress)
     }
+}
+
+/// Converts ingress rules into the JSON format expected by Cloudflare edge for updateConfiguration.
+pub fn ingress_to_cloudflared_json(rules: &[IngressRule]) -> String {
+    #[derive(Serialize)]
+    struct EdgeConfig<'a> {
+        ingress: &'a [IngressRule],
+        #[serde(rename = "warp-routing")]
+        warp_routing: serde_json::Value,
+    }
+
+    let edge_config = EdgeConfig {
+        ingress: rules,
+        warp_routing: serde_json::json!({}),
+    };
+
+    serde_json::to_string(&edge_config).unwrap_or_else(|_| {
+        r#"{"ingress":[{"service":"http_status:404"}],"warp-routing":{}}"#.to_string()
+    })
 }

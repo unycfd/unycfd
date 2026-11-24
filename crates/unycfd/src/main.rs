@@ -16,13 +16,6 @@ use libcfd::origin::Origin;
 use libcfd::tunnel::{NamedTunnel, Tunnel};
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Tune memory allocator behavior on Linux to keep memory footprint under 3-4 MB
-    #[cfg(target_os = "linux")]
-    unsafe {
-        // Optimize glibc malloc arenas
-        std::env::set_var("MALLOC_ARENA_MAX", "1");
-    }
-
     let cli_opts = CliOptions::parse()?;
 
     if cli_opts.show_help {
@@ -57,8 +50,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 async fn async_main(cli: CliOptions) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Resolve configuration
-    let mut config = if let Some(ref config_path) = cli.config_path {
+    // Resolve configuration (--url mode does not inherit system configs)
+    let mut config = if cli.url.is_some() {
+        Config::default()
+    } else if let Some(ref config_path) = cli.config_path {
         tracing::info!("loading config from {}", config_path.display());
         Config::from_file(config_path)?
     } else if std::path::Path::new("/etc/unycfd/config.yml").is_file() {
@@ -78,8 +73,14 @@ async fn async_main(cli: CliOptions) -> Result<(), Box<dyn std::error::Error + S
     if let Some(protocol) = cli.protocol {
         config.protocol = Some(protocol);
     }
+    if let Some(edge_ip_ver) = cli.edge_ip_version {
+        config.edge_ip_version = Some(edge_ip_ver);
+    }
     if let Some(region) = cli.region {
         config.region = Some(region);
+    }
+    if config.tunnel.is_none() {
+        config.tunnel = cli.tunnel_id;
     }
 
     // Quick tunnel mode (--url http://...)
@@ -118,15 +119,19 @@ async fn async_main(cli: CliOptions) -> Result<(), Box<dyn std::error::Error + S
         (Tunnel::named(named), Vec::new())
     } else if let Some(ref tid) = config.tunnel {
         // Look for matching credentials file in standard paths
+        let home_dir = std::env::var("HOME").unwrap_or_default();
+        let home_path = format!("{home_dir}/.cloudflared/{tid}.json");
         let standard_path = format!("/etc/cloudflared/{tid}.json");
         let uny_path = format!("/etc/unycfd/{tid}.json");
-        let alt_path = format!("/var/qyc/cloudflare/tunnels/{tid}.json");
-        let cred_path = if std::path::Path::new(&standard_path).is_file() {
+        let local_path = format!("./{tid}.json");
+        let cred_path = if !home_dir.is_empty() && std::path::Path::new(&home_path).is_file() {
+            Some(home_path)
+        } else if std::path::Path::new(&standard_path).is_file() {
             Some(standard_path)
         } else if std::path::Path::new(&uny_path).is_file() {
             Some(uny_path)
-        } else if std::path::Path::new(&alt_path).is_file() {
-            Some(alt_path)
+        } else if std::path::Path::new(&local_path).is_file() {
+            Some(local_path)
         } else {
             None
         };
@@ -146,18 +151,32 @@ async fn async_main(cli: CliOptions) -> Result<(), Box<dyn std::error::Error + S
         return Err("No tunnel specified. Provide --config, --token, or --url.".into());
     };
 
-    let ingress_rules = if config.ingress.is_empty() {
+    let mut ingress_rules = if cli.url.is_some() || config.ingress.is_empty() {
         default_ingress
     } else {
         config.ingress.clone()
     };
 
-    let ingress_json = config.to_cloudflared_json();
+    // cloudflared requires the last rule to be a catch-all (no hostname and no path)
+    let has_catch_all = ingress_rules
+        .last()
+        .map(|r| r.hostname.is_none() && r.path.is_none())
+        .unwrap_or(false);
+    if !has_catch_all && !ingress_rules.is_empty() {
+        tracing::warn!("last ingress rule is not a catch-all, appending http_status:404 rule");
+        ingress_rules.push(IngressRule {
+            hostname: None,
+            path: None,
+            service: "http_status:404".to_string(),
+        });
+    }
 
-    // Determine transport protocol
+    let ingress_json = crate::config::ingress_to_cloudflared_json(&ingress_rules);
+
+    // Determine transport protocol: accept "quic", "h2" / "http2", "auto"
     let transport = match config.protocol.as_deref().unwrap_or("auto") {
         "quic" => Transport::Quic,
-        "h2" => Transport::H2,
+        "h2" | "http2" => Transport::H2,
         _ => Transport::Auto,
     };
 
@@ -180,6 +199,7 @@ async fn async_main(cli: CliOptions) -> Result<(), Box<dyn std::error::Error + S
     let options = EdgeOptions {
         transport,
         region: config.region,
+        edge_ip_version: config.edge_ip_version,
         configuration_json: ingress_json.into_bytes(),
         on_remote_configuration: Some(on_remote_cfg),
         on_connected: Some(on_connected),

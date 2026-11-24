@@ -49,6 +49,22 @@ impl CliOptions {
                 Short('V') | Long("version") => {
                     options.show_version = true;
                 }
+                Long("no-autoupdate") | Long("post-quantum") => {
+                    // Accepted for compatibility with cloudflared scripts/systemd units
+                }
+                Long("metrics")
+                | Long("origincert")
+                | Long("pidfile")
+                | Long("logfile")
+                | Long("autoupdate-freq")
+                | Long("retries")
+                | Long("grace-period") => {
+                    // Flags with arguments accepted for cloudflared compatibility
+                    let _ = parser.value();
+                }
+                Long(other) => {
+                    tracing::warn!("ignoring unrecognized option: --{other}");
+                }
                 Value(val) => {
                     let s = val.to_string_lossy();
                     // Ignore common cloudflared subcommands like "tunnel" and "run"
