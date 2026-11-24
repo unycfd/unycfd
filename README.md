@@ -22,23 +22,40 @@ Designed as a drop-in, lightweight replacement for the official Go-based `cloudf
 
 ---
 
-## Architectural Comparison & Foundation
+## Architectural Comparison
 
-Comparison against official `cloudflared` (Go) and existing Rust reference implementations:
+Comparison against official `cloudflared` (Go) and previous Rust implementations:
 
-| Feature                | Official `cloudflared` (Go)         | `cloudflare-quick-tunnel-rs`        | `libcfd`                                       | **unycfd**                              |
-| :--------------------- | :---------------------------------- | :---------------------------------- | :--------------------------------------------- | :-------------------------------------- |
-| **Language**           | Go                                  | Rust                                | Rust                                           | **Rust**                                |
-| **Named Tunnels**      | ✅ Yes                              | ❌ No (quick tunnel only)           | ✅ Yes (`from_credentials_file`, `from_token`) | ✅ Yes                                  |
-| **Edge Protocol**      | ✅ QUIC + HTTP/2 fallback           | ⚠️ QUIC only (no H2 fallback)       | ✅ QUIC (`quinn`/`quiche`) + HTTP/2 (`h2`)     | ✅ QUIC + HTTP/2 fallback               |
-| **Cap'n Proto RPC**    | ⚠️ Go Cap'n Proto / custom          | ⚠️ `capnp-rpc` (non-`Send` futures) | ✅ Standalone `libcfd-rpc` (`Send` futures)    | ✅ Modular `libcfd-rpc` layer           |
-| **Ingress Proxying**   | ✅ Unix socket + HTTP + WS + 404    | ⚠️ In-process HTTP handler only     | ⚠️ Abstract traits only (no router/daemon)     | ✅ Unix socket + HTTP + WS + 404 router |
-| **CLI & YAML Drop-in** | ✅ Yes (original spec)              | ❌ No                               | ❌ No (library only)                           | ✅ Drop-in CLI & YAML compatible        |
-| **Systemd sd_notify**  | ❌ No (Type=simple, no sync)        | ❌ No                               | ❌ No                                          | ✅ Native `READY=1` & `STOPPING=1`      |
-| **Binary Size**        | ⚠️ ~40–60 MB                        | ⚠️ ~10–15 MB                        | ⚠️ (library only)                              | ✅ **~3.3 MB**                          |
-| **Memory Footprint**   | ⚠️ ~15–35 MB RSS                    | ⚠️ ~15–20 MB                        | ⚠️ ~10–15 MB (unoptimized)                     | ✅ **< 3–4 MB RSS** (~2.8 MB)           |
+| Feature                | Official `cloudflared` (Go)         | `cloudflare-quick-tunnel-rs`        | **unycfd**                              |
+| :--------------------- | :---------------------------------- | :---------------------------------- | :-------------------------------------- |
+| **Language**           | Go                                  | Rust                                | **Rust**                                |
+| **Named Tunnels**      | ✅ Yes                              | ❌ No (quick tunnel only)           | ✅ **Yes** (JSON & Token)               |
+| **Edge Protocol**      | ✅ QUIC + HTTP/2 fallback           | ⚠️ QUIC only (no H2 fallback)       | ✅ **QUIC (`quinn`) + HTTP/2 fallback** |
+| **Edge Wire RPC**      | ⚠️ Go Cap'n Proto / custom          | ⚠️ `capnp-rpc` (non-`Send` futures) | ✅ **Modular `libcfd-rpc` (`Send`)**    |
+| **Ingress Proxying**   | ✅ Unix socket + HTTP + WS + 404    | ⚠️ In-process HTTP handler only     | ✅ **Unix socket + HTTP + WS + 404**    |
+| **CLI & YAML Drop-in** | ✅ Yes (original spec)              | ❌ No                               | ✅ **Drop-in CLI & YAML compatible**    |
+| **Systemd sd_notify**  | ❌ No (Type=simple, no sync)        | ❌ No                               | ✅ **Native `READY=1` & `STOPPING=1`**  |
+| **Binary Size**        | ⚠️ ~40–60 MB                        | ⚠️ ~10–15 MB                        | ✅ **~3.3 MB** (stripped musl)          |
+| **Memory Footprint**   | ⚠️ ~15–35 MB RSS                    | ⚠️ ~15–20 MB RSS                    | ✅ **< 3–4 MB RSS** (~2.8 MB)           |
 
-`libcfd` was selected as the superior protocol foundation because it cleanly handles named tunnel RPC handshakes, connection authentication secrets, remote configuration pushes, and transport negotiation. `unycfd` builds on top of it to provide a complete drop-in daemon with tuned concurrency, systemd synchronization, and an ultra-lean runtime.
+---
+
+## Workspace Architecture & Protocol Internals
+
+Cloudflare Tunnel (`argotunnel`) multiplexes **Cap'n Proto RPC** messages over QUIC streams or HTTP/2 to register tunnels with Cloudflare's edge, maintain heartbeats, and exchange proxy streams. 
+
+To achieve maximum performance and separation of concerns, this repository is organized as a modular Cargo workspace:
+
+```text
+unycfd (Cargo Workspace)
+├── crates/libcfd-rpc  ──> Standalone Cap'n Proto RPC framing with Send futures (no thread-local runtime locks)
+├── crates/libcfd      ──> Embeddable Rust client library (QUIC/quinn, HTTP/2, edge registration & named tunnels)
+└── crates/unycfd      ──> Production CLI daemon (tuned single-threaded runtime, ingress router, sd_notify, < 3 MB RSS)
+```
+
+- **Why a custom RPC layer? (`libcfd-rpc`)**: Cloudflare's wire protocol requires Cap'n Proto RPC over the transport stream. The generic upstream `capnp-rpc` crate produces non-`Send` futures, binding execution to thread-local contexts. `libcfd-rpc` provides the exact RPC wire framing needed for Cloudflare Edge handshakes with clean `Send` futures that integrate seamlessly into any async executor.
+- **Why an embeddable library? (`libcfd`)**: If you are writing a Rust application and want to expose an internal service via Cloudflare Tunnel without deploying an external daemon binary, you can depend on `libcfd` directly.
+- **Why a tuned daemon? (`unycfd`)**: Standard multi-threaded async binaries with default Quinn buffer sizes typically allocate 10–15 MB RSS. `unycfd` packages `libcfd` into a drop-in binary that drives memory down to **< 3 MB RSS** while retaining full CLI/YAML compatibility.
 
 ---
 
