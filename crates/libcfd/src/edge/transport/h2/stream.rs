@@ -55,10 +55,10 @@ impl AsyncRead for ReceiveStreamReader {
                         self.chunk = Some(chunk);
                     } else {
                         let used = chunk.len();
-                        if let Some(receive) = self.receive.as_mut() {
-                            if let Err(e) = receive.flow_control().release_capacity(used) {
-                                return Poll::Ready(Err(io::Error::other(e)));
-                            }
+                        if let Some(receive) = self.receive.as_mut()
+                            && let Err(e) = receive.flow_control().release_capacity(used)
+                        {
+                            return Poll::Ready(Err(io::Error::other(e)));
                         }
                         self.chunk = None;
                         self.position = 0;
@@ -90,35 +90,34 @@ impl AsyncRead for ReceiveStreamReader {
 
 impl Drop for ReceiveStreamReader {
     fn drop(&mut self) {
-        if let Some(chunk) = self.chunk.take() {
-            if let Some(receive) = self.receive.as_mut() {
-                let _ = receive.flow_control().release_capacity(chunk.len());
-            }
+        if let Some(chunk) = self.chunk.take()
+            && let Some(receive) = self.receive.as_mut()
+        {
+            let _ = receive.flow_control().release_capacity(chunk.len());
         }
-        if !self.eof {
-            if let Some(mut receive) = self.receive.take() {
-                if tokio::runtime::Handle::try_current().is_ok() {
-                    tokio::spawn(async move {
-                        let mut drained = 0;
-                        const MAX_DRAIN: usize = 512 * 1024;
-                        while drained < MAX_DRAIN {
-                            let step = tokio::time::timeout(
-                                std::time::Duration::from_millis(500),
-                                std::future::poll_fn(|cx| Pin::new(&mut receive).poll_data(cx)),
-                            )
-                            .await;
-                            match step {
-                                Ok(Some(Ok(chunk))) => {
-                                    let len = chunk.len();
-                                    drained += len;
-                                    let _ = receive.flow_control().release_capacity(len);
-                                }
-                                _ => break,
-                            }
+        if !self.eof
+            && let Some(mut receive) = self.receive.take()
+            && tokio::runtime::Handle::try_current().is_ok()
+        {
+            tokio::spawn(async move {
+                let mut drained = 0;
+                const MAX_DRAIN: usize = 512 * 1024;
+                while drained < MAX_DRAIN {
+                    let step = tokio::time::timeout(
+                        std::time::Duration::from_millis(500),
+                        std::future::poll_fn(|cx| Pin::new(&mut receive).poll_data(cx)),
+                    )
+                    .await;
+                    match step {
+                        Ok(Some(Ok(chunk))) => {
+                            let len = chunk.len();
+                            drained += len;
+                            let _ = receive.flow_control().release_capacity(len);
                         }
-                    });
+                        _ => break,
+                    }
                 }
-            }
+            });
         }
     }
 }

@@ -70,6 +70,10 @@ impl std::fmt::Debug for EdgeOptions {
                 "on_remote_configuration",
                 &self.on_remote_configuration.as_ref().map(|_| "<callback>"),
             )
+            .field(
+                "on_connected",
+                &self.on_connected.as_ref().map(|_| "<callback>"),
+            )
             .finish()
     }
 }
