@@ -24,19 +24,21 @@ Designed as a drop-in, lightweight replacement for the official Go-based `cloudf
 
 ## Architectural Comparison & Foundation
 
-Between the two reference implementations:
+Comparison against official `cloudflared` (Go) and existing Rust reference implementations:
 
-| Feature                | `cloudflare-quick-tunnel-rs`        | `libcfd`                                       | **unycfd**                              |
-| :--------------------- | :---------------------------------- | :--------------------------------------------- | :-------------------------------------- |
-| **Named Tunnels**      | ❌ No (quick tunnel only)           | ✅ Yes (`from_credentials_file`, `from_token`) | ✅ Yes                                  |
-| **Edge Protocol**      | ⚠️ QUIC only (no H2 fallback)       | ✅ QUIC (`quinn`/`quiche`) + HTTP/2 (`h2`)     | ✅ QUIC + HTTP/2 fallback               |
-| **Cap'n Proto RPC**    | ⚠️ `capnp-rpc` (non-`Send` futures) | ✅ Standalone `libcfd-rpc` (`Send` futures)    | ✅ Modular `libcfd-rpc` layer           |
-| **Ingress Proxying**   | ⚠️ In-process HTTP handler only     | ⚠️ Abstract traits only (no router/daemon)     | ✅ Unix socket + HTTP + WS + 404 router |
-| **CLI & YAML Drop-in** | ❌ No                               | ❌ No (library only)                           | ✅ Drop-in CLI & YAML compatible        |
-| **Systemd sd_notify**  | ❌ No                               | ❌ No                                          | ✅ Native `READY=1` & `STOPPING=1`      |
-| **Memory Footprint**   | ⚠️ ~15–20 MB                        | ⚠️ ~10–15 MB (unoptimized)                     | ✅ **< 3–4 MB RSS** (~2.8 MB)           |
+| Feature                | Official `cloudflared` (Go)         | `cloudflare-quick-tunnel-rs`        | `libcfd`                                       | **unycfd**                              |
+| :--------------------- | :---------------------------------- | :---------------------------------- | :--------------------------------------------- | :-------------------------------------- |
+| **Language**           | Go                                  | Rust                                | Rust                                           | **Rust**                                |
+| **Named Tunnels**      | ✅ Yes                              | ❌ No (quick tunnel only)           | ✅ Yes (`from_credentials_file`, `from_token`) | ✅ Yes                                  |
+| **Edge Protocol**      | ✅ QUIC + HTTP/2 fallback           | ⚠️ QUIC only (no H2 fallback)       | ✅ QUIC (`quinn`/`quiche`) + HTTP/2 (`h2`)     | ✅ QUIC + HTTP/2 fallback               |
+| **Cap'n Proto RPC**    | ⚠️ Go Cap'n Proto / custom          | ⚠️ `capnp-rpc` (non-`Send` futures) | ✅ Standalone `libcfd-rpc` (`Send` futures)    | ✅ Modular `libcfd-rpc` layer           |
+| **Ingress Proxying**   | ✅ Unix socket + HTTP + WS + 404    | ⚠️ In-process HTTP handler only     | ⚠️ Abstract traits only (no router/daemon)     | ✅ Unix socket + HTTP + WS + 404 router |
+| **CLI & YAML Drop-in** | ✅ Yes (original spec)              | ❌ No                               | ❌ No (library only)                           | ✅ Drop-in CLI & YAML compatible        |
+| **Systemd sd_notify**  | ❌ No (Type=simple, no sync)        | ❌ No                               | ❌ No                                          | ✅ Native `READY=1` & `STOPPING=1`      |
+| **Binary Size**        | ⚠️ ~40–60 MB                        | ⚠️ ~10–15 MB                        | ⚠️ (library only)                              | ✅ **~3.3 MB**                          |
+| **Memory Footprint**   | ⚠️ ~15–35 MB RSS                    | ⚠️ ~15–20 MB                        | ⚠️ ~10–15 MB (unoptimized)                     | ✅ **< 3–4 MB RSS** (~2.8 MB)           |
 
-`libcfd` was selected as the superior protocol foundation because it cleanly handles named tunnel RPC handshakes, connection authentication secrets, remote configuration pushes, and transport negotiation.
+`libcfd` was selected as the superior protocol foundation because it cleanly handles named tunnel RPC handshakes, connection authentication secrets, remote configuration pushes, and transport negotiation. `unycfd` builds on top of it to provide a complete drop-in daemon with tuned concurrency, systemd synchronization, and an ultra-lean runtime.
 
 ---
 
