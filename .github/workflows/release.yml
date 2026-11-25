@@ -32,9 +32,9 @@ jobs:
           # macOS Apple Silicon (M1/M2/M3/M4)
           - target: aarch64-apple-darwin
             os: macos-latest
-          # macOS Intel
+          # macOS Intel (cross-compiled on macos-latest)
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
           # Windows x86_64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
