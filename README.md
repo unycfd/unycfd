@@ -176,6 +176,104 @@ Because `unycfd` integrates with systemd's notification protocol (`Type=notify`)
 
 ---
 
+## Smoke Testing Release Binaries
+
+Quick self-contained scripts to download the latest release binary, start a local test HTTP server on `127.0.0.1:8080`, and expose it via a Quick Tunnel (`trycloudflare.com`). Once running, open a second terminal and run `curl -i https://<your-subdomain>.trycloudflare.com/`.
+
+### Linux (POSIX `sh` / BusyBox `ash` compatible, auto-detects arch)
+
+```sh
+#!/bin/sh
+set -eu
+
+case "$(uname -m)" in
+  x86_64|amd64)  ARCH="x86_64-unknown-linux-musl" ;;
+  aarch64|arm64) ARCH="aarch64-unknown-linux-musl" ;;
+  *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+
+URL="https://github.com/unycfd/unycfd/releases/latest/download/unycfd-${ARCH}"
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL "$URL" -o unycfd
+else
+  wget -qO unycfd "$URL"
+fi
+chmod +x unycfd
+./unycfd --version
+
+mkdir -p /tmp/unycfd-test
+printf 'hello from unycfd\n' > /tmp/unycfd-test/index.html
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m http.server 8080 --directory /tmp/unycfd-test >/dev/null 2>&1 &
+else
+  busybox httpd -f -p 127.0.0.1:8080 -h /tmp/unycfd-test >/dev/null 2>&1 &
+fi
+HTTP_PID=$!
+trap 'kill "$HTTP_PID" 2>/dev/null || true' EXIT
+
+./unycfd --url http://127.0.0.1:8080
+```
+
+### macOS (auto-detects Apple Silicon / Intel)
+
+```sh
+#!/bin/sh
+set -eu
+
+case "$(uname -m)" in
+  arm64|aarch64) ARCH="aarch64-apple-darwin" ;;
+  x86_64)        ARCH="x86_64-apple-darwin" ;;
+  *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+
+curl -fsSL "https://github.com/unycfd/unycfd/releases/latest/download/unycfd-${ARCH}" -o unycfd
+chmod +x unycfd
+xattr -d com.apple.quarantine ./unycfd 2>/dev/null || true
+./unycfd --version
+
+mkdir -p /tmp/unycfd-test
+printf 'hello from unycfd\n' > /tmp/unycfd-test/index.html
+python3 -m http.server 8080 --directory /tmp/unycfd-test >/dev/null 2>&1 &
+HTTP_PID=$!
+trap 'kill "$HTTP_PID" 2>/dev/null || true' EXIT
+
+./unycfd --url http://127.0.0.1:8080
+```
+
+### Windows (PowerShell, no external tools required)
+
+```powershell
+$arch = switch ($env:PROCESSOR_ARCHITECTURE) {
+  "AMD64" { "x86_64-pc-windows-msvc.exe" }
+  default { throw "Unsupported architecture: $env:PROCESSOR_ARCHITECTURE" }
+}
+
+curl.exe -fsSL "https://github.com/unycfd/unycfd/releases/latest/download/unycfd-$arch" -o unycfd.exe
+.\unycfd.exe --version
+
+$server = Start-Job -ScriptBlock {
+  $l = [System.Net.HttpListener]::new()
+  $l.Prefixes.Add("http://127.0.0.1:8080/")
+  $l.Start()
+  while ($l.IsListening) {
+    $ctx = $l.GetContext()
+    $buf = [Text.Encoding]::UTF8.GetBytes("hello from unycfd`n")
+    $ctx.Response.ContentLength64 = $buf.Length
+    $ctx.Response.OutputStream.Write($buf, 0, $buf.Length)
+    $ctx.Response.Close()
+  }
+}
+
+try {
+  .\unycfd.exe --url http://127.0.0.1:8080
+} finally {
+  Stop-Job $server -ErrorAction SilentlyContinue
+  Remove-Job $server -ErrorAction SilentlyContinue
+}
+```
+
+---
+
 ## License
 
 BSD 3-Clause License. See [LICENSE](LICENSE) for details.
