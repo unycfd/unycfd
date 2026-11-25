@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use futures_util::io::{
-    AsyncRead as FuturesAsyncRead, AsyncReadExt as FuturesAsyncReadExt,
-    AsyncWrite as FuturesAsyncWrite, Cursor,
+    AsyncBufRead as FuturesAsyncBufRead, AsyncRead as FuturesAsyncRead,
+    AsyncReadExt as FuturesAsyncReadExt, AsyncWrite as FuturesAsyncWrite, BufReader, Cursor,
 };
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use libcfd::origin::http::body::{Body, Request, Response};
@@ -231,8 +231,8 @@ where
         if name.as_str().eq_ignore_ascii_case("host") {
             has_host = true;
         }
-        // Skip Connection header from downstream so we can enforce Connection: close
-        if name.as_str().eq_ignore_ascii_case("connection") {
+        // Skip hop-by-hop headers from downstream (we enforce Connection: close and send decoded body)
+        if is_hop_by_hop_header(name.as_str()) {
             continue;
         }
         req_bytes.extend_from_slice(name.as_str().as_bytes());
@@ -327,11 +327,27 @@ where
         .and_then(|c| StatusCode::from_u16(c).ok())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
+    let mut is_chunked = false;
     let mut response_headers = HeaderMap::new();
     for h in parsed_resp.headers.iter() {
+        if h.name.eq_ignore_ascii_case("transfer-encoding") {
+            if let Ok(v) = std::str::from_utf8(h.value) {
+                if v.to_ascii_lowercase().contains("chunked") {
+                    is_chunked = true;
+                }
+            }
+            continue;
+        }
+        if is_hop_by_hop_header(h.name) {
+            continue;
+        }
         if let (Ok(name), Ok(val)) = (HeaderName::from_bytes(h.name.as_bytes()), HeaderValue::from_bytes(h.value)) {
             response_headers.append(name, val);
         }
+    }
+
+    if is_chunked {
+        response_headers.remove(http::header::CONTENT_LENGTH);
     }
 
     // Check for content-length or empty body statuses (204 No Content, 304 Not Modified, 1xx)
@@ -350,7 +366,9 @@ where
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.trim().parse::<u64>().ok());
 
-        if let Some(cl) = content_length {
+        if is_chunked {
+            Body::from_reader(ChunkedDecoder::new(body_reader))
+        } else if let Some(cl) = content_length {
             use futures_util::AsyncReadExt;
             Body::from_reader(body_reader.take(cl))
         } else {
@@ -359,6 +377,215 @@ where
     };
 
     respond.send(Response::new(status_code, response_headers, response_body));
+}
+
+fn is_hop_by_hop_header(name: &str) -> bool {
+    name.eq_ignore_ascii_case("connection")
+        || name.eq_ignore_ascii_case("keep-alive")
+        || name.eq_ignore_ascii_case("proxy-authenticate")
+        || name.eq_ignore_ascii_case("proxy-authorization")
+        || name.eq_ignore_ascii_case("te")
+        || name.eq_ignore_ascii_case("trailer")
+        || name.eq_ignore_ascii_case("trailers")
+        || name.eq_ignore_ascii_case("transfer-encoding")
+        || name.eq_ignore_ascii_case("upgrade")
+}
+
+#[derive(Debug)]
+enum ChunkState {
+    ReadSize { line: Vec<u8> },
+    ReadData { remaining: usize },
+    ReadCrlf { saw_cr: bool },
+    DrainTrailers { line_len: usize, saw_cr: bool },
+    Done,
+}
+
+/// Streaming HTTP/1.1 `Transfer-Encoding: chunked` decoder implementing `futures_util::io::AsyncRead`.
+pub struct ChunkedDecoder<R> {
+    inner: BufReader<R>,
+    state: ChunkState,
+}
+
+impl<R: FuturesAsyncRead + Unpin> ChunkedDecoder<R> {
+    pub fn new(inner: R) -> Self {
+        Self {
+            inner: BufReader::new(inner),
+            state: ChunkState::ReadSize {
+                line: Vec::with_capacity(32),
+            },
+        }
+    }
+}
+
+impl<R: FuturesAsyncRead + Unpin> FuturesAsyncRead for ChunkedDecoder<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+
+        let this = &mut *self;
+        loop {
+            match &mut this.state {
+                ChunkState::Done => return Poll::Ready(Ok(0)),
+                ChunkState::ReadSize { line } => {
+                    let available = match Pin::new(&mut this.inner).poll_fill_buf(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Ready(Ok(b)) => b,
+                    };
+                    if available.is_empty() {
+                        return Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "unexpected EOF reading chunk size",
+                        )));
+                    }
+
+                    if let Some(nl_pos) = available.iter().position(|&b| b == b'\n') {
+                        line.extend_from_slice(&available[..nl_pos]);
+                        Pin::new(&mut this.inner).consume(nl_pos + 1);
+
+                        let size_str = std::str::from_utf8(line)
+                            .map_err(|_| {
+                                std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "invalid UTF-8 in chunk size",
+                                )
+                            })?
+                            .split(';')
+                            .next()
+                            .unwrap_or("")
+                            .trim();
+
+                        let chunk_size = usize::from_str_radix(size_str, 16).map_err(|_| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("invalid chunk size: {size_str}"),
+                            )
+                        })?;
+
+                        if chunk_size == 0 {
+                            this.state = ChunkState::DrainTrailers {
+                                line_len: 0,
+                                saw_cr: false,
+                            };
+                        } else {
+                            this.state = ChunkState::ReadData {
+                                remaining: chunk_size,
+                            };
+                        }
+                    } else {
+                        let len = available.len();
+                        if line.len() + len > 8192 {
+                            return Poll::Ready(Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "chunk size line too long",
+                            )));
+                        }
+                        line.extend_from_slice(available);
+                        Pin::new(&mut this.inner).consume(len);
+                    }
+                }
+                ChunkState::ReadData { remaining } => {
+                    let available = match Pin::new(&mut this.inner).poll_fill_buf(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Ready(Ok(b)) => b,
+                    };
+                    if available.is_empty() {
+                        return Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "unexpected EOF inside chunk data",
+                        )));
+                    }
+
+                    let to_copy = available.len().min(*remaining).min(buf.len());
+                    buf[..to_copy].copy_from_slice(&available[..to_copy]);
+                    Pin::new(&mut this.inner).consume(to_copy);
+                    *remaining -= to_copy;
+
+                    if *remaining == 0 {
+                        this.state = ChunkState::ReadCrlf { saw_cr: false };
+                    }
+                    return Poll::Ready(Ok(to_copy));
+                }
+                ChunkState::ReadCrlf { saw_cr } => {
+                    let available = match Pin::new(&mut this.inner).poll_fill_buf(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Ready(Ok(b)) => b,
+                    };
+                    if available.is_empty() {
+                        return Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "unexpected EOF reading chunk CRLF",
+                        )));
+                    }
+
+                    let mut consumed = 0;
+                    let mut done_crlf = false;
+                    for &b in available {
+                        consumed += 1;
+                        if b == b'\n' {
+                            done_crlf = true;
+                            break;
+                        } else if b == b'\r' && !*saw_cr {
+                            *saw_cr = true;
+                        } else {
+                            return Poll::Ready(Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "expected CRLF after chunk data",
+                            )));
+                        }
+                    }
+                    Pin::new(&mut this.inner).consume(consumed);
+                    if done_crlf {
+                        this.state = ChunkState::ReadSize {
+                            line: Vec::with_capacity(32),
+                        };
+                    }
+                }
+                ChunkState::DrainTrailers { line_len, saw_cr } => {
+                    let available = match Pin::new(&mut this.inner).poll_fill_buf(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Ready(Ok(b)) => b,
+                    };
+                    if available.is_empty() {
+                        // Tolerate EOF right after 0\r\n if origin closed cleanly
+                        this.state = ChunkState::Done;
+                        return Poll::Ready(Ok(0));
+                    }
+
+                    let mut consumed = 0;
+                    let mut done = false;
+                    for &b in available {
+                        consumed += 1;
+                        if b == b'\n' {
+                            if *line_len == 0 {
+                                done = true;
+                                break;
+                            }
+                            *line_len = 0;
+                            *saw_cr = false;
+                        } else if b == b'\r' && !*saw_cr && *line_len == 0 {
+                            *saw_cr = true;
+                        } else {
+                            *line_len += 1;
+                        }
+                    }
+                    Pin::new(&mut this.inner).consume(consumed);
+                    if done {
+                        this.state = ChunkState::Done;
+                        return Poll::Ready(Ok(0));
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl StreamOrigin<WebSocketResponder> for IngressOrigin {

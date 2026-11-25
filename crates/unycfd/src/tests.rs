@@ -1,5 +1,5 @@
 use crate::config::{ingress_to_cloudflared_json, Config, IngressRule};
-use crate::proxy::{IngressOrigin, PrefixedStream};
+use crate::proxy::{ChunkedDecoder, IngressOrigin, PrefixedStream};
 use futures_util::io::{AsyncReadExt, AsyncWriteExt, Cursor};
 
 #[test]
@@ -144,4 +144,41 @@ async fn test_prefixed_stream_reads_prefix_and_writes_through() {
     let mut prefixed_sink = PrefixedStream::new(Vec::new(), inner_sink);
     prefixed_sink.write_all(b"WRITE_TEST").await.unwrap();
     assert_eq!(buf, b"WRITE_TEST");
+}
+
+#[tokio::test]
+async fn test_chunked_decoder_multiple_chunks_extensions_and_trailers() {
+    let wire = b"5;ext=1\r\nhello\r\n6\r\n world\r\n0\r\nX-Trailer: yes\r\n\r\n";
+    let mut dec = ChunkedDecoder::new(Cursor::new(wire.to_vec()));
+    let mut out = Vec::new();
+    dec.read_to_end(&mut out).await.unwrap();
+    assert_eq!(out, b"hello world");
+}
+
+#[tokio::test]
+async fn test_chunked_decoder_tiny_reads_and_binary_payload() {
+    let payload: Vec<u8> = vec![0x1f, 0x8b, 0x08, 0x00, 0xde, 0xad, 0xbe, 0xef];
+    let mut wire = format!("{:x}\r\n", payload.len()).into_bytes();
+    wire.extend_from_slice(&payload);
+    wire.extend_from_slice(b"\r\n0\r\n\r\n");
+
+    let mut dec = ChunkedDecoder::new(Cursor::new(wire));
+    let mut out = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        let n = dec.read(&mut byte).await.unwrap();
+        if n == 0 {
+            break;
+        }
+        out.push(byte[0]);
+    }
+    assert_eq!(out, payload);
+}
+
+#[tokio::test]
+async fn test_chunked_decoder_empty_body() {
+    let mut dec = ChunkedDecoder::new(Cursor::new(b"0\r\n\r\n".to_vec()));
+    let mut out = Vec::new();
+    dec.read_to_end(&mut out).await.unwrap();
+    assert!(out.is_empty());
 }
