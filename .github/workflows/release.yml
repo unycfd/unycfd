@@ -47,3 +47,17 @@ jobs:
           target: ${{ matrix.target }}
           archive: $bin-$target
           token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload raw binary (Unix)
+        if: runner.os != 'Windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp "target/${{ matrix.target }}/release/unycfd" "unycfd-${{ matrix.target }}"
+          gh release upload "${{ github.ref_name }}" "unycfd-${{ matrix.target }}" --clobber
+      - name: Upload raw binary (Windows)
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Copy-Item "target\${{ matrix.target }}\release\unycfd.exe" "unycfd-${{ matrix.target }}.exe"
+          gh release upload "${{ github.ref_name }}" "unycfd-${{ matrix.target }}.exe" --clobber
