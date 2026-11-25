@@ -50,6 +50,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 async fn async_main(cli: CliOptions) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let home_dir = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from);
+    let home_config = home_dir
+        .as_ref()
+        .map(|h| h.join(".cloudflared").join("config.yml"));
+
     // Resolve configuration (--url mode does not inherit system configs)
     let mut config = if cli.url.is_some() {
         Config::default()
@@ -62,6 +69,11 @@ async fn async_main(cli: CliOptions) -> Result<(), Box<dyn std::error::Error + S
     } else if std::path::Path::new("/etc/cloudflared/config.yml").is_file() {
         tracing::info!("loading default config from /etc/cloudflared/config.yml");
         Config::from_file("/etc/cloudflared/config.yml")?
+    } else if let Some(ref hc) = home_config
+        && hc.is_file()
+    {
+        tracing::info!("loading default config from {}", hc.display());
+        Config::from_file(hc)?
     } else {
         Config::default()
     };
@@ -119,25 +131,26 @@ async fn async_main(cli: CliOptions) -> Result<(), Box<dyn std::error::Error + S
         (Tunnel::named(named), Vec::new())
     } else if let Some(ref tid) = config.tunnel {
         // Look for matching credentials file in standard paths
-        let home_dir = std::env::var("HOME").unwrap_or_default();
-        let home_path = format!("{home_dir}/.cloudflared/{tid}.json");
-        let standard_path = format!("/etc/cloudflared/{tid}.json");
-        let uny_path = format!("/etc/unycfd/{tid}.json");
-        let local_path = format!("./{tid}.json");
-        let cred_path = if !home_dir.is_empty() && std::path::Path::new(&home_path).is_file() {
-            Some(home_path)
-        } else if std::path::Path::new(&standard_path).is_file() {
+        let home_path = home_dir
+            .as_ref()
+            .map(|h| h.join(".cloudflared").join(format!("{tid}.json")));
+        let standard_path = std::path::PathBuf::from(format!("/etc/cloudflared/{tid}.json"));
+        let uny_path = std::path::PathBuf::from(format!("/etc/unycfd/{tid}.json"));
+        let local_path = std::path::PathBuf::from(format!("{tid}.json"));
+        let cred_path = if let Some(hp) = home_path.filter(|p| p.is_file()) {
+            Some(hp)
+        } else if standard_path.is_file() {
             Some(standard_path)
-        } else if std::path::Path::new(&uny_path).is_file() {
+        } else if uny_path.is_file() {
             Some(uny_path)
-        } else if std::path::Path::new(&local_path).is_file() {
+        } else if local_path.is_file() {
             Some(local_path)
         } else {
             None
         };
 
         if let Some(path) = cred_path {
-            tracing::info!("found credentials for tunnel {} at {}", tid, path);
+            tracing::info!("found credentials for tunnel {} at {}", tid, path.display());
             let named = NamedTunnel::from_credentials_file(path)?;
             (Tunnel::named(named), Vec::new())
         } else {
