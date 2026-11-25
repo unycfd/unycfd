@@ -264,7 +264,7 @@ while ($l.IsListening) {
 }
 '@ | Set-Content "$env:TEMP\unycfd-test.ps1"
 
-$server = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile", "-File", "$env:TEMP\unycfd-test.ps1"
+$server = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$env:TEMP\unycfd-test.ps1"
 
 try {
   .\unycfd.exe --url http://127.0.0.1:8080
