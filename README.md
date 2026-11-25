@@ -251,15 +251,26 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
 curl.exe -fsSL "https://github.com/unycfd/unycfd/releases/latest/download/unycfd-$arch" -o unycfd.exe
 .\unycfd.exe --version
 
-$server = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList @(
-  '-NoProfile', '-Command',
-  '$l = [System.Net.HttpListener]::new(); $l.Prefixes.Add("http://127.0.0.1:8080/"); $l.Start(); while ($l.IsListening) { $c = $l.GetContext(); $b = [Text.Encoding]::UTF8.GetBytes("hello from unycfd`n"); $c.Response.ContentLength64 = $b.Length; $c.Response.OutputStream.Write($b,0,$b.Length); $c.Response.Close() }'
-)
+@'
+$l = [System.Net.HttpListener]::new()
+$l.Prefixes.Add("http://127.0.0.1:8080/")
+$l.Start()
+while ($l.IsListening) {
+  $c = $l.GetContext()
+  $b = [Text.Encoding]::UTF8.GetBytes("hello from unycfd`n")
+  $c.Response.ContentLength64 = $b.Length
+  $c.Response.OutputStream.Write($b, 0, $b.Length)
+  $c.Response.Close()
+}
+'@ | Set-Content "$env:TEMP\unycfd-test.ps1"
+
+$server = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile", "-File", "$env:TEMP\unycfd-test.ps1"
 
 try {
   .\unycfd.exe --url http://127.0.0.1:8080
 } finally {
   Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+  Remove-Item "$env:TEMP\unycfd-test.ps1" -ErrorAction SilentlyContinue
 }
 ```
 
