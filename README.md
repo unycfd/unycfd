@@ -209,7 +209,7 @@ else
   busybox httpd -f -p 127.0.0.1:8080 -h /tmp/unycfd-test >/dev/null 2>&1 &
 fi
 HTTP_PID=$!
-trap 'kill "$HTTP_PID" 2>/dev/null || true' EXIT
+trap 'kill "$HTTP_PID" 2>/dev/null || true' EXIT INT TERM
 
 ./unycfd --url http://127.0.0.1:8080
 ```
@@ -235,7 +235,7 @@ mkdir -p /tmp/unycfd-test
 printf 'hello from unycfd\n' > /tmp/unycfd-test/index.html
 python3 -m http.server 8080 --directory /tmp/unycfd-test >/dev/null 2>&1 &
 HTTP_PID=$!
-trap 'kill "$HTTP_PID" 2>/dev/null || true' EXIT
+trap 'kill "$HTTP_PID" 2>/dev/null || true' EXIT INT TERM
 
 ./unycfd --url http://127.0.0.1:8080
 ```
@@ -251,24 +251,15 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
 curl.exe -fsSL "https://github.com/unycfd/unycfd/releases/latest/download/unycfd-$arch" -o unycfd.exe
 .\unycfd.exe --version
 
-$server = Start-Job -ScriptBlock {
-  $l = [System.Net.HttpListener]::new()
-  $l.Prefixes.Add("http://127.0.0.1:8080/")
-  $l.Start()
-  while ($l.IsListening) {
-    $ctx = $l.GetContext()
-    $buf = [Text.Encoding]::UTF8.GetBytes("hello from unycfd`n")
-    $ctx.Response.ContentLength64 = $buf.Length
-    $ctx.Response.OutputStream.Write($buf, 0, $buf.Length)
-    $ctx.Response.Close()
-  }
-}
+$server = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList @(
+  '-NoProfile', '-Command',
+  '$l = [System.Net.HttpListener]::new(); $l.Prefixes.Add("http://127.0.0.1:8080/"); $l.Start(); while ($l.IsListening) { $c = $l.GetContext(); $b = [Text.Encoding]::UTF8.GetBytes("hello from unycfd`n"); $c.Response.ContentLength64 = $b.Length; $c.Response.OutputStream.Write($b,0,$b.Length); $c.Response.Close() }'
+)
 
 try {
   .\unycfd.exe --url http://127.0.0.1:8080
 } finally {
-  Stop-Job $server -ErrorAction SilentlyContinue
-  Remove-Job $server -ErrorAction SilentlyContinue
+  Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
 }
 ```
 
