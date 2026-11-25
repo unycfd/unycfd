@@ -21,6 +21,7 @@ jobs:
   upload-assets:
     needs: create-release
     strategy:
+      fail-fast: false
       matrix:
         include:
           # Linux x86_64 (statically linked musl, runs on any Linux distribution)
@@ -53,11 +54,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cp "target/${{ matrix.target }}/release/unycfd" "unycfd-${{ matrix.target }}"
-          gh release upload "${{ github.ref_name }}" "unycfd-${{ matrix.target }}" --clobber
+          gh release upload "${{ github.ref_name }}" "unycfd-${{ matrix.target }}" --clobber || \
+            (sleep 3 && gh release upload "${{ github.ref_name }}" "unycfd-${{ matrix.target }}" --clobber) || \
+            (sleep 5 && gh release upload "${{ github.ref_name }}" "unycfd-${{ matrix.target }}" --clobber)
       - name: Upload raw binary (Windows)
         if: runner.os == 'Windows'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           Copy-Item "target\${{ matrix.target }}\release\unycfd.exe" "unycfd-${{ matrix.target }}.exe"
-          gh release upload "${{ github.ref_name }}" "unycfd-${{ matrix.target }}.exe" --clobber
+          for ($i=1; $i -le 3; $i++) {
+            gh release upload "${{ github.ref_name }}" "unycfd-${{ matrix.target }}.exe" --clobber
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($i -eq 3) { exit $LASTEXITCODE }
+            Start-Sleep -Seconds 3
+          }
