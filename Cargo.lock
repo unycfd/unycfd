@@ -669,52 +669,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
-name = "libcfd"
-version = "0.3.0"
-dependencies = [
- "axum",
- "base64",
- "boring",
- "bytes",
- "fs2",
- "futures-io",
- "futures-util",
- "getrandom 0.4.3",
- "h2",
- "http",
- "libcfd-rpc",
- "quiche",
- "quinn",
- "rustls",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "sha1",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "tokio-util",
- "tower",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "webpki-roots",
-]
-
-[[package]]
-name = "libcfd-rpc"
-version = "0.3.0"
-dependencies = [
- "capnp",
- "capnpc",
- "futures",
- "futures-io",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1436,7 +1390,6 @@ dependencies = [
  "http",
  "httparse",
  "lexopt",
- "libcfd",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1444,6 +1397,53 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "unycfd-libcfd",
+]
+
+[[package]]
+name = "unycfd-libcfd"
+version = "0.3.0"
+dependencies = [
+ "axum",
+ "base64",
+ "boring",
+ "bytes",
+ "fs2",
+ "futures-io",
+ "futures-util",
+ "getrandom 0.4.3",
+ "h2",
+ "http",
+ "quiche",
+ "quinn",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "sha1",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "unycfd-rpc",
+ "uuid",
+ "webpki-roots",
+]
+
+[[package]]
+name = "unycfd-rpc"
+version = "0.3.0"
+dependencies = [
+ "capnp",
+ "capnpc",
+ "futures",
+ "futures-io",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

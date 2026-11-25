@@ -11,7 +11,7 @@ name = "unycfd"
 path = "src/main.rs"
 
 [dependencies]
-libcfd = { version = "0.3.0", path = "../libcfd" }
+libcfd = { package = "unycfd-libcfd", version = "0.3.0", path = "../libcfd" }
 tokio = { version = "1.53", default-features = false, features = [
     "rt",
     "net",

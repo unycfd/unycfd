@@ -1,7 +1,14 @@
 [package]
-name = "libcfd-rpc"
+name = "unycfd-rpc"
 version = "0.3.0"
 edition = "2024"
+license = "BSD-3-Clause"
+repository = "https://github.com/unycfd/unycfd"
+description = "Cap'n Proto RPC wire framing with Send futures for unycfd (fork of libcfd-rpc)"
+
+[lib]
+name = "libcfd_rpc"
+path = "src/lib.rs"
 
 [dependencies]
 capnp = "0.27"
